@@ -215,7 +215,7 @@ struct rtw_pci {
 	bool running;
 
 	/* napi structure */
-	struct net_device netdev;
+	struct net_device *netdev;
 	struct napi_struct napi;
 
 	u16 rx_tag;
@@ -223,6 +223,8 @@ struct rtw_pci {
 	struct rtw_pci_tx_ring tx_rings[RTK_MAX_TX_QUEUE_NUM];
 	struct rtw_pci_rx_ring rx_rings[RTK_MAX_RX_QUEUE_NUM];
 	u16 link_ctrl;
+	atomic_t link_usage;
+	bool rx_no_aspm;
 	DECLARE_BITMAP(flags, NUM_OF_RTW_PCI_FLAGS);
 
 	void __iomem *mmap;

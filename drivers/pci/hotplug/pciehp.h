@@ -46,6 +46,9 @@ extern int pciehp_poll_time;
 /**
  * struct controller - PCIe hotplug controller
  * @pcie: pointer to the controller's PCIe port service device
+ * @dsn: cached copy of Device Serial Number of Function 0 in the hotplug slot
+ *	(PCIe r6.2 sec 7.9.3); used to determine whether a hotplugged device
+ *	was replaced with a different one during system sleep
  * @slot_cap: cached copy of the Slot Capabilities register
  * @inband_presence_disabled: In-Band Presence Detect Disable supported by
  *	controller and disabled per spec recommendation (PCIe r5.0, appendix I
@@ -75,6 +78,8 @@ extern int pciehp_poll_time;
  * @reset_lock: prevents access to the Data Link Layer Link Active bit in the
  *	Link Status register and to the Presence Detect State bit in the Slot
  *	Status register during a slot reset which may cause them to flap
+ * @depth: Number of additional hotplug ports in the path to the root bus,
+ *	used as lock subclass for @reset_lock
  * @ist_running: flag to keep user request waiting while IRQ thread is running
  * @request_result: result of last user request submitted to the IRQ thread
  * @requester: wait queue to wake up on completion of user request,
@@ -85,6 +90,7 @@ extern int pciehp_poll_time;
  */
 struct controller {
 	struct pcie_device *pcie;
+	u64 dsn;
 
 	u32 slot_cap;				/* capabilities and quirks */
 	unsigned int inband_presence_disabled:1;
@@ -106,6 +112,7 @@ struct controller {
 
 	struct hotplug_slot hotplug_slot;	/* hotplug core interface */
 	struct rw_semaphore reset_lock;
+	unsigned int depth;
 	unsigned int ist_running;
 	int request_result;
 	wait_queue_head_t requester;

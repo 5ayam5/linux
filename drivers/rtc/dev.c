@@ -90,13 +90,13 @@ static int clear_uie(struct rtc_device *rtc)
 		rtc->stop_uie_polling = 1;
 		if (rtc->uie_timer_active) {
 			spin_unlock_irq(&rtc->irq_lock);
-			del_timer_sync(&rtc->uie_timer);
+			timer_delete_sync(&rtc->uie_timer);
 			spin_lock_irq(&rtc->irq_lock);
 			rtc->uie_timer_active = 0;
 		}
 		if (rtc->uie_task_active) {
 			spin_unlock_irq(&rtc->irq_lock);
-			flush_scheduled_work();
+			flush_work(&rtc->uie_task);
 			spin_lock_irq(&rtc->irq_lock);
 		}
 		rtc->uie_irq_active = 0;
@@ -391,14 +391,14 @@ static long rtc_dev_ioctl(struct file *file,
 		}
 
 		switch(param.param) {
-			long offset;
 		case RTC_PARAM_FEATURES:
 			if (param.index != 0)
 				err = -EINVAL;
 			param.uvalue = rtc->features[0];
 			break;
 
-		case RTC_PARAM_CORRECTION:
+		case RTC_PARAM_CORRECTION: {
+			long offset;
 			mutex_unlock(&rtc->ops_lock);
 			if (param.index != 0)
 				return -EINVAL;
@@ -407,7 +407,7 @@ static long rtc_dev_ioctl(struct file *file,
 			if (err == 0)
 				param.svalue = offset;
 			break;
-
+		}
 		default:
 			if (rtc->ops->param_get)
 				err = rtc->ops->param_get(rtc->dev.parent, &param);
@@ -523,7 +523,6 @@ static int rtc_dev_release(struct inode *inode, struct file *file)
 
 static const struct file_operations rtc_dev_fops = {
 	.owner		= THIS_MODULE,
-	.llseek		= no_llseek,
 	.read		= rtc_dev_read,
 	.poll		= rtc_dev_poll,
 	.unlocked_ioctl	= rtc_dev_ioctl,
@@ -565,10 +564,4 @@ void __init rtc_dev_init(void)
 	err = alloc_chrdev_region(&rtc_devt, 0, RTC_DEV_MAX, "rtc");
 	if (err < 0)
 		pr_err("failed to allocate char dev region\n");
-}
-
-void __exit rtc_dev_exit(void)
-{
-	if (rtc_devt)
-		unregister_chrdev_region(rtc_devt, RTC_DEV_MAX);
 }

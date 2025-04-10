@@ -122,17 +122,6 @@ void print__data_rq_misc_params_st(struct display_mode_lib *mode_lib, const stru
 	dml_print("DML_RQ_DLG_CALC: =====================================\n");
 }
 
-void print__rq_dlg_params_st(struct display_mode_lib *mode_lib, const struct _vcs_dpi_display_rq_dlg_params_st *rq_dlg_param)
-{
-	dml_print("DML_RQ_DLG_CALC: =====================================\n");
-	dml_print("DML_RQ_DLG_CALC: DISPLAY_RQ_DLG_PARAM_ST\n");
-	dml_print("DML_RQ_DLG_CALC:  <LUMA>\n");
-	print__data_rq_dlg_params_st(mode_lib, &rq_dlg_param->rq_l);
-	dml_print("DML_RQ_DLG_CALC:  <CHROMA>\n");
-	print__data_rq_dlg_params_st(mode_lib, &rq_dlg_param->rq_c);
-	dml_print("DML_RQ_DLG_CALC: =====================================\n");
-}
-
 void print__dlg_sys_params_st(struct display_mode_lib *mode_lib, const struct _vcs_dpi_display_dlg_sys_params_st *dlg_sys_param)
 {
 	dml_print("DML_RQ_DLG_CALC: =====================================\n");
@@ -141,9 +130,6 @@ void print__dlg_sys_params_st(struct display_mode_lib *mode_lib, const struct _v
 	dml_print("DML_RQ_DLG_CALC:    t_urg_wm_us          = %3.2f\n", dlg_sys_param->t_urg_wm_us);
 	dml_print("DML_RQ_DLG_CALC:    t_sr_wm_us           = %3.2f\n", dlg_sys_param->t_sr_wm_us);
 	dml_print("DML_RQ_DLG_CALC:    t_extra_us           = %3.2f\n", dlg_sys_param->t_extra_us);
-	dml_print(
-			"DML_RQ_DLG_CALC:    t_srx_delay_us       = %3.2f\n",
-			dlg_sys_param->t_srx_delay_us);
 	dml_print(
 			"DML_RQ_DLG_CALC:    deepsleep_dcfclk_mhz = %3.2f\n",
 			dlg_sys_param->deepsleep_dcfclk_mhz);

@@ -23,6 +23,9 @@ struct mlx5e_tir_builder *mlx5e_tir_builder_alloc(bool modify)
 	struct mlx5e_tir_builder *builder;
 
 	builder = kvzalloc(sizeof(*builder), GFP_KERNEL);
+	if (!builder)
+		return NULL;
+
 	builder->modify = modify;
 
 	return builder;
@@ -88,9 +91,6 @@ void mlx5e_tir_builder_build_packet_merge(struct mlx5e_tir_builder *builder,
 			 (MLX5E_PARAMS_DEFAULT_LRO_WQE_SZ - rough_max_l2_l3_hdr_sz) >> 8);
 		MLX5_SET(tirc, tirc, lro_timeout_period_usecs, pkt_merge_param->timeout);
 		break;
-	case MLX5E_PACKET_MERGE_SHAMPO:
-		MLX5_SET(tirc, tirc, packet_merge_mask, MLX5_TIRC_PACKET_MERGE_MASK_SHAMPO);
-		break;
 	default:
 		break;
 	}
@@ -124,7 +124,7 @@ void mlx5e_tir_builder_build_rss(struct mlx5e_tir_builder *builder,
 		const size_t len = MLX5_FLD_SZ_BYTES(tirc, rx_hash_toeplitz_key);
 		void *rss_key = MLX5_ADDR_OF(tirc, tirc, rx_hash_toeplitz_key);
 
-		MLX5_SET(tirc, tirc, rx_hash_symmetric, 1);
+		MLX5_SET(tirc, tirc, rx_hash_symmetric, rss_hash->symmetric);
 		memcpy(rss_key, rss_hash->toeplitz_hash_key, len);
 	}
 

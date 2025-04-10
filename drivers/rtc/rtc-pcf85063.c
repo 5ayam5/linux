@@ -14,7 +14,7 @@
 #include <linux/bcd.h>
 #include <linux/rtc.h>
 #include <linux/module.h>
-#include <linux/of_device.h>
+#include <linux/of.h>
 #include <linux/pm_wakeirq.h>
 #include <linux/regmap.h>
 
@@ -35,6 +35,7 @@
 #define PCF85063_REG_CTRL1_CAP_SEL	BIT(0)
 #define PCF85063_REG_CTRL1_STOP		BIT(5)
 #define PCF85063_REG_CTRL1_EXT_TEST	BIT(7)
+#define PCF85063_REG_CTRL1_SWR		0x58
 
 #define PCF85063_REG_CTRL2		0x01
 #define PCF85063_CTRL2_AF		BIT(6)
@@ -169,10 +170,10 @@ static int pcf85063_rtc_read_alarm(struct device *dev, struct rtc_wkalrm *alrm)
 	if (ret)
 		return ret;
 
-	alrm->time.tm_sec = bcd2bin(buf[0]);
-	alrm->time.tm_min = bcd2bin(buf[1]);
-	alrm->time.tm_hour = bcd2bin(buf[2]);
-	alrm->time.tm_mday = bcd2bin(buf[3]);
+	alrm->time.tm_sec = bcd2bin(buf[0] & 0x7f);
+	alrm->time.tm_min = bcd2bin(buf[1] & 0x7f);
+	alrm->time.tm_hour = bcd2bin(buf[2] & 0x3f);
+	alrm->time.tm_mday = bcd2bin(buf[3] & 0x3f);
 
 	ret = regmap_read(pcf85063->regmap, PCF85063_REG_CTRL2, &val);
 	if (ret)
@@ -322,7 +323,16 @@ static const struct rtc_class_ops pcf85063_rtc_ops = {
 static int pcf85063_nvmem_read(void *priv, unsigned int offset,
 			       void *val, size_t bytes)
 {
-	return regmap_read(priv, PCF85063_REG_RAM, val);
+	unsigned int tmp;
+	int ret;
+
+	ret = regmap_read(priv, PCF85063_REG_RAM, &tmp);
+	if (ret < 0)
+		return ret;
+
+	*(u8 *)val = tmp;
+
+	return 0;
 }
 
 static int pcf85063_nvmem_write(void *priv, unsigned int offset,
@@ -424,7 +434,7 @@ static int pcf85063_clkout_control(struct clk_hw *hw, bool enable)
 	unsigned int buf;
 	int ret;
 
-	ret = regmap_read(pcf85063->regmap, PCF85063_REG_OFFSET, &buf);
+	ret = regmap_read(pcf85063->regmap, PCF85063_REG_CTRL2, &buf);
 	if (ret < 0)
 		return ret;
 	buf &= PCF85063_REG_CLKO_F_MASK;
@@ -514,7 +524,7 @@ static struct clk *pcf85063_clkout_register_clk(struct pcf85063 *pcf85063)
 }
 #endif
 
-static const struct pcf85063_config pcf85063tp_config = {
+static const struct pcf85063_config config_pcf85063 = {
 	.regmap = {
 		.reg_bits = 8,
 		.val_bits = 8,
@@ -522,13 +532,39 @@ static const struct pcf85063_config pcf85063tp_config = {
 	},
 };
 
+static const struct pcf85063_config config_pcf85063tp = {
+	.regmap = {
+		.reg_bits = 8,
+		.val_bits = 8,
+		.max_register = 0x0a,
+	},
+};
+
+static const struct pcf85063_config config_pcf85063a = {
+	.regmap = {
+		.reg_bits = 8,
+		.val_bits = 8,
+		.max_register = 0x11,
+	},
+	.has_alarms = 1,
+};
+
+static const struct pcf85063_config config_rv8263 = {
+	.regmap = {
+		.reg_bits = 8,
+		.val_bits = 8,
+		.max_register = 0x11,
+	},
+	.has_alarms = 1,
+	.force_cap_7000 = 1,
+};
+
 static int pcf85063_probe(struct i2c_client *client)
 {
 	struct pcf85063 *pcf85063;
 	unsigned int tmp;
 	int err;
-	const struct pcf85063_config *config = &pcf85063tp_config;
-	const void *data = of_device_get_match_data(&client->dev);
+	const struct pcf85063_config *config;
 	struct nvmem_config nvmem_cfg = {
 		.name = "pcf85063_nvram",
 		.reg_read = pcf85063_nvmem_read,
@@ -544,8 +580,9 @@ static int pcf85063_probe(struct i2c_client *client)
 	if (!pcf85063)
 		return -ENOMEM;
 
-	if (data)
-		config = data;
+	config = i2c_get_match_data(client);
+	if (!config)
+		return -ENODEV;
 
 	pcf85063->regmap = devm_regmap_init_i2c(client, &config->regmap);
 	if (IS_ERR(pcf85063->regmap))
@@ -553,15 +590,29 @@ static int pcf85063_probe(struct i2c_client *client)
 
 	i2c_set_clientdata(client, pcf85063);
 
-	err = regmap_read(pcf85063->regmap, PCF85063_REG_CTRL1, &tmp);
-	if (err) {
-		dev_err(&client->dev, "RTC chip is not present\n");
-		return err;
-	}
+	err = regmap_read(pcf85063->regmap, PCF85063_REG_SC, &tmp);
+	if (err)
+		return dev_err_probe(&client->dev, err, "RTC chip is not present\n");
 
 	pcf85063->rtc = devm_rtc_allocate_device(&client->dev);
 	if (IS_ERR(pcf85063->rtc))
 		return PTR_ERR(pcf85063->rtc);
+
+	/*
+	 * If a Power loss is detected, SW reset the device.
+	 * From PCF85063A datasheet:
+	 * There is a low probability that some devices will have corruption
+	 * of the registers after the automatic power-on reset...
+	 */
+	if (tmp & PCF85063_REG_SC_OS) {
+		dev_warn(&client->dev,
+			 "POR issue detected, sending a SW reset\n");
+		err = regmap_write(pcf85063->regmap, PCF85063_REG_CTRL1,
+				   PCF85063_REG_CTRL1_SWR);
+		if (err < 0)
+			dev_warn(&client->dev,
+				 "SW reset failed, trying to continue\n");
+	}
 
 	err = pcf85063_load_capacitance(pcf85063, client->dev.of_node,
 					config->force_cap_7000 ? 7000 : 0);
@@ -572,13 +623,19 @@ static int pcf85063_probe(struct i2c_client *client)
 	pcf85063->rtc->ops = &pcf85063_rtc_ops;
 	pcf85063->rtc->range_min = RTC_TIMESTAMP_BEGIN_2000;
 	pcf85063->rtc->range_max = RTC_TIMESTAMP_END_2099;
-	pcf85063->rtc->uie_unsupported = 1;
+	set_bit(RTC_FEATURE_ALARM_RES_2S, pcf85063->rtc->features);
+	clear_bit(RTC_FEATURE_UPDATE_INTERRUPT, pcf85063->rtc->features);
 	clear_bit(RTC_FEATURE_ALARM, pcf85063->rtc->features);
 
 	if (config->has_alarms && client->irq > 0) {
+		unsigned long irqflags = IRQF_TRIGGER_LOW;
+
+		if (dev_fwnode(&client->dev))
+			irqflags = 0;
+
 		err = devm_request_threaded_irq(&client->dev, client->irq,
 						NULL, pcf85063_rtc_handle_irq,
-						IRQF_TRIGGER_LOW | IRQF_ONESHOT,
+						irqflags | IRQF_ONESHOT,
 						"pcf85063", pcf85063);
 		if (err) {
 			dev_warn(&pcf85063->rtc->dev,
@@ -604,31 +661,23 @@ static int pcf85063_probe(struct i2c_client *client)
 	return devm_rtc_register_device(pcf85063->rtc);
 }
 
+static const struct i2c_device_id pcf85063_ids[] = {
+	{ "pca85073a", .driver_data = (kernel_ulong_t)&config_pcf85063a },
+	{ "pcf85063", .driver_data = (kernel_ulong_t)&config_pcf85063 },
+	{ "pcf85063tp", .driver_data = (kernel_ulong_t)&config_pcf85063tp },
+	{ "pcf85063a", .driver_data = (kernel_ulong_t)&config_pcf85063a },
+	{ "rv8263", .driver_data = (kernel_ulong_t)&config_rv8263 },
+	{}
+};
+MODULE_DEVICE_TABLE(i2c, pcf85063_ids);
+
 #ifdef CONFIG_OF
-static const struct pcf85063_config pcf85063a_config = {
-	.regmap = {
-		.reg_bits = 8,
-		.val_bits = 8,
-		.max_register = 0x11,
-	},
-	.has_alarms = 1,
-};
-
-static const struct pcf85063_config rv8263_config = {
-	.regmap = {
-		.reg_bits = 8,
-		.val_bits = 8,
-		.max_register = 0x11,
-	},
-	.has_alarms = 1,
-	.force_cap_7000 = 1,
-};
-
 static const struct of_device_id pcf85063_of_match[] = {
-	{ .compatible = "nxp,pcf85063", .data = &pcf85063tp_config },
-	{ .compatible = "nxp,pcf85063tp", .data = &pcf85063tp_config },
-	{ .compatible = "nxp,pcf85063a", .data = &pcf85063a_config },
-	{ .compatible = "microcrystal,rv8263", .data = &rv8263_config },
+	{ .compatible = "nxp,pca85073a", .data = &config_pcf85063a },
+	{ .compatible = "nxp,pcf85063", .data = &config_pcf85063 },
+	{ .compatible = "nxp,pcf85063tp", .data = &config_pcf85063tp },
+	{ .compatible = "nxp,pcf85063a", .data = &config_pcf85063a },
+	{ .compatible = "microcrystal,rv8263", .data = &config_rv8263 },
 	{}
 };
 MODULE_DEVICE_TABLE(of, pcf85063_of_match);
@@ -639,7 +688,8 @@ static struct i2c_driver pcf85063_driver = {
 		.name	= "rtc-pcf85063",
 		.of_match_table = of_match_ptr(pcf85063_of_match),
 	},
-	.probe_new	= pcf85063_probe,
+	.probe		= pcf85063_probe,
+	.id_table	= pcf85063_ids,
 };
 
 module_i2c_driver(pcf85063_driver);

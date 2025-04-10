@@ -765,7 +765,7 @@ static void waiting_process_next(struct AdapterCtlBlk *acb)
 		return;
 
 	if (timer_pending(&acb->waiting_timer))
-		del_timer(&acb->waiting_timer);
+		timer_delete(&acb->waiting_timer);
 
 	if (list_empty(dcb_list_head))
 		return;
@@ -946,7 +946,6 @@ static void build_srb(struct scsi_cmnd *cmd, struct DeviceCtlBlk *dcb,
  * layer, invoke 'done' on completion
  *
  * @cmd: pointer to scsi command object
- * @done: function pointer to be invoked on completion
  *
  * Returns 1 if the adapter (host) is busy, else returns 0. One
  * reason for an adapter to be busy is that the number
@@ -959,7 +958,7 @@ static void build_srb(struct scsi_cmnd *cmd, struct DeviceCtlBlk *dcb,
  * Locks: struct Scsi_Host::host_lock held on entry (with "irqsave")
  *        and is expected to be held on return.
  *
- **/
+ */
 static int dc395x_queue_command_lck(struct scsi_cmnd *cmd)
 {
 	void (*done)(struct scsi_cmnd *) = scsi_done;
@@ -1154,7 +1153,7 @@ static int __dc395x_eh_bus_reset(struct scsi_cmnd *cmd)
 		cmd, cmd->device->id, (u8)cmd->device->lun, cmd);
 
 	if (timer_pending(&acb->waiting_timer))
-		del_timer(&acb->waiting_timer);
+		timer_delete(&acb->waiting_timer);
 
 	/*
 	 * disable interrupt    
@@ -1367,7 +1366,7 @@ static u8 start_scsi(struct AdapterCtlBlk* acb, struct DeviceCtlBlk* dcb,
 			"command while another command (0x%p) is active.",
 			srb->cmd,
 			acb->active_dcb->active_srb ?
-			    acb->active_dcb->active_srb->cmd : 0);
+			    acb->active_dcb->active_srb->cmd : NULL);
 		return 1;
 	}
 	if (DC395x_read16(acb, TRM_S1040_SCSI_STATUS) & SCSIINTERRUPT) {
@@ -1562,7 +1561,7 @@ static void dc395x_handle_interrupt(struct AdapterCtlBlk *acb,
 	/*dprintkl(KERN_DEBUG, "handle_interrupt: intstatus = 0x%02x ", scsi_intstatus); */
 
 	if (timer_pending(&acb->selto_timer))
-		del_timer(&acb->selto_timer);
+		timer_delete(&acb->selto_timer);
 
 	if (scsi_intstatus & (INT_SELTIMEOUT | INT_DISCONNECT)) {
 		disconnect(acb);	/* bus free interrupt  */
@@ -3315,9 +3314,6 @@ static void srb_done(struct AdapterCtlBlk *acb, struct DeviceCtlBlk *dcb,
 
 	/* Here is the info for Doug Gilbert's sg3 ... */
 	scsi_set_resid(cmd, srb->total_xfer_length);
-	/* This may be interpreted by sb. or not ... */
-	cmd->SCp.this_residual = srb->total_xfer_length;
-	cmd->SCp.buffers_residual = 0;
 	if (debug_enabled(DBG_KG)) {
 		if (srb->total_xfer_length)
 			dprintkdbg(DBG_KG, "srb_done: (0x%p) <%02i-%i> "
@@ -3458,7 +3454,7 @@ static void scsi_reset_detect(struct AdapterCtlBlk *acb)
 	dprintkl(KERN_INFO, "scsi_reset_detect: acb=%p\n", acb);
 	/* delay half a second */
 	if (timer_pending(&acb->waiting_timer))
-		del_timer(&acb->waiting_timer);
+		timer_delete(&acb->waiting_timer);
 
 	DC395x_write8(acb, TRM_S1040_SCSI_CONTROL, DO_RSTMODULE);
 	DC395x_write8(acb, TRM_S1040_DMA_CONTROL, DMARESETMODULE);
@@ -3589,10 +3585,19 @@ static struct DeviceCtlBlk *device_alloc(struct AdapterCtlBlk *acb,
 #endif
 	if (dcb->target_lun != 0) {
 		/* Copy settings */
-		struct DeviceCtlBlk *p;
-		list_for_each_entry(p, &acb->dcb_list, list)
-			if (p->target_id == dcb->target_id)
+		struct DeviceCtlBlk *p = NULL, *iter;
+
+		list_for_each_entry(iter, &acb->dcb_list, list)
+			if (iter->target_id == dcb->target_id) {
+				p = iter;
 				break;
+			}
+
+		if (!p) {
+			kfree(dcb);
+			return NULL;
+		}
+
 		dprintkdbg(DBG_1, 
 		       "device_alloc: <%02i-%i> copy from <%02i-%i>\n",
 		       dcb->target_id, dcb->target_lun,
@@ -3710,13 +3715,13 @@ static void adapter_remove_and_free_all_devices(struct AdapterCtlBlk* acb)
 
 
 /**
- * dc395x_slave_alloc - Called by the scsi mid layer to tell us about a new
+ * dc395x_sdev_init - Called by the scsi mid layer to tell us about a new
  * scsi device that we need to deal with. We allocate a new device and then
  * insert that device into the adapters device list.
  *
  * @scsi_device: The new scsi device that we need to handle.
  **/
-static int dc395x_slave_alloc(struct scsi_device *scsi_device)
+static int dc395x_sdev_init(struct scsi_device *scsi_device)
 {
 	struct AdapterCtlBlk *acb = (struct AdapterCtlBlk *)scsi_device->host->hostdata;
 	struct DeviceCtlBlk *dcb;
@@ -3731,12 +3736,12 @@ static int dc395x_slave_alloc(struct scsi_device *scsi_device)
 
 
 /**
- * dc395x_slave_destroy - Called by the scsi mid layer to tell us about a
+ * dc395x_sdev_destroy - Called by the scsi mid layer to tell us about a
  * device that is going away.
  *
  * @scsi_device: The new scsi device that we need to handle.
  **/
-static void dc395x_slave_destroy(struct scsi_device *scsi_device)
+static void dc395x_sdev_destroy(struct scsi_device *scsi_device)
 {
 	struct AdapterCtlBlk *acb = (struct AdapterCtlBlk *)scsi_device->host->hostdata;
 	struct DeviceCtlBlk *dcb = find_dcb(acb, scsi_device->id, scsi_device->lun);
@@ -4410,9 +4415,9 @@ static void adapter_uninit(struct AdapterCtlBlk *acb)
 
 	/* remove timers */
 	if (timer_pending(&acb->waiting_timer))
-		del_timer(&acb->waiting_timer);
+		timer_delete(&acb->waiting_timer);
 	if (timer_pending(&acb->selto_timer))
-		del_timer(&acb->selto_timer);
+		timer_delete(&acb->selto_timer);
 
 	adapter_uninit_chip(acb);
 	adapter_remove_and_free_all_devices(acb);
@@ -4536,14 +4541,14 @@ static int dc395x_show_info(struct seq_file *m, struct Scsi_Host *host)
 }
 
 
-static struct scsi_host_template dc395x_driver_template = {
+static const struct scsi_host_template dc395x_driver_template = {
 	.module                 = THIS_MODULE,
 	.proc_name              = DC395X_NAME,
 	.show_info              = dc395x_show_info,
 	.name                   = DC395X_BANNER " " DC395X_VERSION,
 	.queuecommand           = dc395x_queue_command,
-	.slave_alloc            = dc395x_slave_alloc,
-	.slave_destroy          = dc395x_slave_destroy,
+	.sdev_init              = dc395x_sdev_init,
+	.sdev_destroy           = dc395x_sdev_destroy,
 	.can_queue              = DC395x_MAX_CAN_QUEUE,
 	.this_id                = 7,
 	.sg_tablesize           = DC395x_MAX_SG_TABLESIZE,
@@ -4663,7 +4668,7 @@ static void dc395x_remove_one(struct pci_dev *dev)
 }
 
 
-static struct pci_device_id dc395x_pci_table[] = {
+static const struct pci_device_id dc395x_pci_table[] = {
 	{
 		.vendor		= PCI_VENDOR_ID_TEKRAM,
 		.device		= PCI_DEVICE_ID_TEKRAM_TRMS1040,

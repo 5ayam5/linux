@@ -576,7 +576,7 @@ static void oxygen_card_free(struct snd_card *card)
 	mutex_destroy(&chip->mutex);
 }
 
-int oxygen_pci_probe(struct pci_dev *pci, int index, char *id,
+static int __oxygen_pci_probe(struct pci_dev *pci, int index, char *id,
 		     struct module *owner,
 		     const struct pci_device_id *ids,
 		     int (*get_model)(struct oxygen *chip,
@@ -701,9 +701,18 @@ int oxygen_pci_probe(struct pci_dev *pci, int index, char *id,
 	pci_set_drvdata(pci, card);
 	return 0;
 }
+
+int oxygen_pci_probe(struct pci_dev *pci, int index, char *id,
+		     struct module *owner,
+		     const struct pci_device_id *ids,
+		     int (*get_model)(struct oxygen *chip,
+				      const struct pci_device_id *id))
+{
+	return snd_card_free_on_error(&pci->dev,
+				      __oxygen_pci_probe(pci, index, id, owner, ids, get_model));
+}
 EXPORT_SYMBOL(oxygen_pci_probe);
 
-#ifdef CONFIG_PM_SLEEP
 static int oxygen_pci_suspend(struct device *dev)
 {
 	struct snd_card *card = dev_get_drvdata(dev);
@@ -779,9 +788,7 @@ static int oxygen_pci_resume(struct device *dev)
 	return 0;
 }
 
-SIMPLE_DEV_PM_OPS(oxygen_pci_pm, oxygen_pci_suspend, oxygen_pci_resume);
-EXPORT_SYMBOL(oxygen_pci_pm);
-#endif /* CONFIG_PM_SLEEP */
+EXPORT_SIMPLE_DEV_PM_OPS(oxygen_pci_pm, oxygen_pci_suspend, oxygen_pci_resume);
 
 void oxygen_pci_shutdown(struct pci_dev *pci)
 {

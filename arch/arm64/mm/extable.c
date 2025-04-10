@@ -8,22 +8,37 @@
 #include <linux/uaccess.h>
 
 #include <asm/asm-extable.h>
+#include <asm/esr.h>
 #include <asm/ptrace.h>
 
-typedef bool (*ex_handler_t)(const struct exception_table_entry *,
-			     struct pt_regs *);
+static bool cpy_faulted_on_uaccess(const struct exception_table_entry *ex,
+				   unsigned long esr)
+{
+	bool uaccess_is_write = FIELD_GET(EX_DATA_UACCESS_WRITE, ex->data);
+	bool fault_on_write = esr & ESR_ELx_WNR;
+
+	return uaccess_is_write == fault_on_write;
+}
+
+bool insn_may_access_user(unsigned long addr, unsigned long esr)
+{
+	const struct exception_table_entry *ex = search_exception_tables(addr);
+
+	if (!ex)
+		return false;
+
+	switch (ex->type) {
+	case EX_TYPE_UACCESS_CPY:
+		return cpy_faulted_on_uaccess(ex, esr);
+	default:
+		return true;
+	}
+}
 
 static inline unsigned long
 get_ex_fixup(const struct exception_table_entry *ex)
 {
 	return ((unsigned long)&ex->fixup + ex->fixup);
-}
-
-static bool ex_handler_fixup(const struct exception_table_entry *ex,
-			     struct pt_regs *regs)
-{
-	regs->pc = get_ex_fixup(ex);
-	return true;
 }
 
 static bool ex_handler_uaccess_err_zero(const struct exception_table_entry *ex,
@@ -39,12 +54,23 @@ static bool ex_handler_uaccess_err_zero(const struct exception_table_entry *ex,
 	return true;
 }
 
+static bool ex_handler_uaccess_cpy(const struct exception_table_entry *ex,
+				   struct pt_regs *regs, unsigned long esr)
+{
+	/* Do not fix up faults on kernel memory accesses */
+	if (!cpy_faulted_on_uaccess(ex, esr))
+		return false;
+
+	regs->pc = get_ex_fixup(ex);
+	return true;
+}
+
 static bool
 ex_handler_load_unaligned_zeropad(const struct exception_table_entry *ex,
 				  struct pt_regs *regs)
 {
-	int reg_data = FIELD_GET(EX_DATA_REG_DATA, ex->type);
-	int reg_addr = FIELD_GET(EX_DATA_REG_ADDR, ex->type);
+	int reg_data = FIELD_GET(EX_DATA_REG_DATA, ex->data);
+	int reg_addr = FIELD_GET(EX_DATA_REG_ADDR, ex->data);
 	unsigned long data, addr, offset;
 
 	addr = pt_regs_read_reg(regs, reg_addr);
@@ -66,7 +92,7 @@ ex_handler_load_unaligned_zeropad(const struct exception_table_entry *ex,
 	return true;
 }
 
-bool fixup_exception(struct pt_regs *regs)
+bool fixup_exception(struct pt_regs *regs, unsigned long esr)
 {
 	const struct exception_table_entry *ex;
 
@@ -75,12 +101,13 @@ bool fixup_exception(struct pt_regs *regs)
 		return false;
 
 	switch (ex->type) {
-	case EX_TYPE_FIXUP:
-		return ex_handler_fixup(ex, regs);
 	case EX_TYPE_BPF:
 		return ex_handler_bpf(ex, regs);
 	case EX_TYPE_UACCESS_ERR_ZERO:
+	case EX_TYPE_KACCESS_ERR_ZERO:
 		return ex_handler_uaccess_err_zero(ex, regs);
+	case EX_TYPE_UACCESS_CPY:
+		return ex_handler_uaccess_cpy(ex, regs, esr);
 	case EX_TYPE_LOAD_UNALIGNED_ZEROPAD:
 		return ex_handler_load_unaligned_zeropad(ex, regs);
 	}

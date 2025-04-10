@@ -36,15 +36,17 @@ fi
 
 tainted=$(cat /proc/sys/kernel/tainted)
 if [[ "$tainted" -ne 0 ]]; then
-    echo "Error: kernel already tainted!" >&2
-    exit 1
+    echo "Warning: kernel already tainted! ($tainted)" >&2
 fi
 
 mitigations="barrier_nospec stf_barrier count_cache_flush rfi_flush entry_flush uaccess_flush"
 
 for m in $mitigations
 do
-    do_one "$m" &
+    if [[ -f /sys/kernel/debug/powerpc/$m ]]
+    then
+        do_one "$m" &
+    fi
 done
 
 echo "Spawned threads enabling/disabling mitigations ..."
@@ -65,9 +67,10 @@ fi
 echo "Waiting for timeout ..."
 wait
 
+orig_tainted=$tainted
 tainted=$(cat /proc/sys/kernel/tainted)
-if [[ "$tainted" -ne 0 ]]; then
-    echo "Error: kernel became tainted!" >&2
+if [[ "$tainted" != "$orig_tainted" ]]; then
+    echo "Error: kernel newly tainted, before ($orig_tainted) after ($tainted)" >&2
     exit 1
 fi
 

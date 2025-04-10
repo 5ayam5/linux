@@ -718,12 +718,14 @@ static void ef4_init_rx_recycle_ring(struct ef4_nic *efx,
 				     struct ef4_rx_queue *rx_queue)
 {
 	unsigned int bufs_in_recycle_ring, page_ring_size;
+	struct iommu_domain __maybe_unused *domain;
 
 	/* Set the RX recycle ring size */
 #ifdef CONFIG_PPC64
 	bufs_in_recycle_ring = EF4_RECYCLE_RING_SIZE_IOMMU;
 #else
-	if (iommu_present(&pci_bus_type))
+	domain = iommu_get_domain_for_dev(&efx->pci_dev->dev);
+	if (domain && domain->type != IOMMU_DOMAIN_IDENTITY)
 		bufs_in_recycle_ring = EF4_RECYCLE_RING_SIZE_IOMMU;
 	else
 		bufs_in_recycle_ring = EF4_RECYCLE_RING_SIZE_NOIOMMU;
@@ -789,7 +791,7 @@ void ef4_fini_rx_queue(struct ef4_rx_queue *rx_queue)
 	netif_dbg(rx_queue->efx, drv, rx_queue->efx->net_dev,
 		  "shutting down RX queue %d\n", ef4_rx_queue_index(rx_queue));
 
-	del_timer_sync(&rx_queue->slow_fill);
+	timer_delete_sync(&rx_queue->slow_fill);
 
 	/* Release RX buffers from the current read ptr to the write ptr */
 	if (rx_queue->buffer) {

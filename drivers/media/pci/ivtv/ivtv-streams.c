@@ -176,7 +176,7 @@ static void ivtv_stream_init(struct ivtv *itv, int type)
 	s->itv = itv;
 	s->type = type;
 	s->name = ivtv_stream_info[type].name;
-	s->caps = ivtv_stream_info[type].v4l2_caps;
+	s->vdev.device_caps = ivtv_stream_info[type].v4l2_caps;
 
 	if (ivtv_stream_info[type].pio)
 		s->dma = DMA_NONE;
@@ -299,12 +299,9 @@ static int ivtv_reg_dev(struct ivtv *itv, int type)
 		if (s_mpg->vdev.v4l2_dev)
 			num = s_mpg->vdev.num + ivtv_stream_info[type].num_offset;
 	}
-	s->vdev.device_caps = s->caps;
-	if (itv->osd_video_pbase) {
-		itv->streams[IVTV_DEC_STREAM_TYPE_YUV].vdev.device_caps |=
-			V4L2_CAP_VIDEO_OUTPUT_OVERLAY;
-		itv->streams[IVTV_DEC_STREAM_TYPE_MPG].vdev.device_caps |=
-			V4L2_CAP_VIDEO_OUTPUT_OVERLAY;
+	if (itv->osd_video_pbase && (type == IVTV_DEC_STREAM_TYPE_YUV ||
+				     type == IVTV_DEC_STREAM_TYPE_MPG)) {
+		s->vdev.device_caps |= V4L2_CAP_VIDEO_OUTPUT_OVERLAY;
 		itv->v4l2_cap |= V4L2_CAP_VIDEO_OUTPUT_OVERLAY;
 	}
 	video_set_drvdata(&s->vdev, s);
@@ -626,10 +623,12 @@ int ivtv_start_v4l2_encode_stream(struct ivtv_stream *s)
 		/* Avoid tinny audio problem - ensure audio clocks are going */
 		v4l2_subdev_call(itv->sd_audio, audio, s_stream, 1);
 		/* Avoid unpredictable PCI bus hang - disable video clocks */
-		v4l2_subdev_call(itv->sd_video, video, s_stream, 0);
+		if (itv->sd_video_is_streaming)
+			v4l2_subdev_call(itv->sd_video, video, s_stream, 0);
 		ivtv_msleep_timeout(300, 0);
 		ivtv_vapi(itv, CX2341X_ENC_INITIALIZE_INPUT, 0);
 		v4l2_subdev_call(itv->sd_video, video, s_stream, 1);
+		itv->sd_video_is_streaming = true;
 	}
 
 	/* begin_capture */
@@ -892,7 +891,7 @@ int ivtv_stop_v4l2_encode_stream(struct ivtv_stream *s, int gop_end)
 
 	/* Set the following Interrupt mask bits for capture */
 	ivtv_set_irq_mask(itv, IVTV_IRQ_MASK_CAPTURE);
-	del_timer(&itv->dma_timer);
+	timer_delete(&itv->dma_timer);
 
 	/* event notification (off) */
 	if (test_and_clear_bit(IVTV_F_I_DIG_RST, &itv->i_flags)) {
@@ -957,7 +956,7 @@ int ivtv_stop_v4l2_decode_stream(struct ivtv_stream *s, int flags, u64 pts)
 	ivtv_vapi(itv, CX2341X_DEC_SET_EVENT_NOTIFICATION, 4, 0, 0, IVTV_IRQ_DEC_AUD_MODE_CHG, -1);
 
 	ivtv_set_irq_mask(itv, IVTV_IRQ_MASK_DECODE);
-	del_timer(&itv->dma_timer);
+	timer_delete(&itv->dma_timer);
 
 	clear_bit(IVTV_F_S_NEEDS_DATA, &s->s_flags);
 	clear_bit(IVTV_F_S_STREAMING, &s->s_flags);

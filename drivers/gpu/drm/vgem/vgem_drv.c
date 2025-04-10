@@ -47,7 +47,6 @@
 
 #define DRIVER_NAME	"vgem"
 #define DRIVER_DESC	"Virtual GEM provider"
-#define DRIVER_DATE	"20120112"
 #define DRIVER_MAJOR	1
 #define DRIVER_MINOR	0
 
@@ -97,7 +96,7 @@ static struct drm_gem_object *vgem_gem_create_object(struct drm_device *dev, siz
 
 	obj = kzalloc(sizeof(*obj), GFP_KERNEL);
 	if (!obj)
-		return NULL;
+		return ERR_PTR(-ENOMEM);
 
 	/*
 	 * vgem doesn't have any begin/end cpu access ioctls, therefore must use
@@ -121,7 +120,6 @@ static const struct drm_driver vgem_driver = {
 
 	.name	= DRIVER_NAME,
 	.desc	= DRIVER_DESC,
-	.date	= DRIVER_DATE,
 	.major	= DRIVER_MAJOR,
 	.minor	= DRIVER_MINOR,
 };

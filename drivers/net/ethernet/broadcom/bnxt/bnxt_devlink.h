@@ -41,8 +41,10 @@ static inline void bnxt_dl_set_remote_reset(struct devlink *dl, bool value)
 #define NVM_OFF_MSIX_VEC_PER_PF_MAX	108
 #define NVM_OFF_MSIX_VEC_PER_PF_MIN	114
 #define NVM_OFF_IGNORE_ARI		164
+#define NVM_OFF_RDMA_CAPABLE		161
 #define NVM_OFF_DIS_GRE_VER_CHECK	171
 #define NVM_OFF_ENABLE_SRIOV		401
+#define NVM_OFF_SUPPORT_RDMA		506
 #define NVM_OFF_NVM_CFG_VER		602
 
 #define BNXT_NVM_CFG_VER_BITS		8
@@ -75,7 +77,7 @@ void bnxt_devlink_health_fw_report(struct bnxt *bp);
 void bnxt_dl_health_fw_status_update(struct bnxt *bp, bool healthy);
 void bnxt_dl_health_fw_recovery_done(struct bnxt *bp);
 void bnxt_dl_fw_reporters_create(struct bnxt *bp);
-void bnxt_dl_fw_reporters_destroy(struct bnxt *bp, bool all);
+void bnxt_dl_fw_reporters_destroy(struct bnxt *bp);
 int bnxt_dl_register(struct bnxt *bp);
 void bnxt_dl_unregister(struct bnxt *bp);
 
