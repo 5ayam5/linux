@@ -6,10 +6,10 @@
 #include <drm/drm_vblank.h>
 
 #include "i915_drv.h"
-#include "i915_reg.h"
 #include "intel_color.h"
 #include "intel_crtc.h"
 #include "intel_de.h"
+#include "intel_display_regs.h"
 #include "intel_display_types.h"
 #include "intel_vblank.h"
 #include "intel_vrr.h"
@@ -222,12 +222,15 @@ int intel_crtc_scanline_offset(const struct intel_crtc_state *crtc_state)
 	 * However if queried just before the start of vblank we'll get an
 	 * answer that's slightly in the future.
 	 */
-	if (DISPLAY_VER(display) == 2)
-		return -1;
-	else if (HAS_DDI(display) && intel_crtc_has_type(crtc_state, INTEL_OUTPUT_HDMI))
-		return 2;
-	else
+	if (DISPLAY_VER(display) >= 20 || display->platform.battlemage)
 		return 1;
+	else if (DISPLAY_VER(display) >= 9 ||
+		 display->platform.broadwell || display->platform.haswell)
+		return intel_crtc_has_type(crtc_state, INTEL_OUTPUT_HDMI) ? 2 : 1;
+	else if (DISPLAY_VER(display) >= 3)
+		return 1;
+	else
+		return -1;
 }
 
 /*
